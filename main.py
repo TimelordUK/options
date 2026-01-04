@@ -587,6 +587,57 @@ with col2:
             - Market makers charge more (wider spreads) for high-gamma positions
             """)
 
+        with st.expander("d₁ Formula Breakdown - Every Term Explained"):
+            st.markdown(r"""
+            ### d₁ = [ln(S/K) + (r + σ²/2)T] / (σ√T)
+
+            | Term | Name | Meaning |
+            |------|------|---------|
+            | **S** | Spot price | Current price of the underlying (e.g., $100) |
+            | **K** | Strike price | Price at which you can exercise (e.g., $100) |
+            | **ln(S/K)** | Log-moneyness | How far ITM/OTM you are in log terms |
+            | **r** | Risk-free rate | Annualized interest rate (e.g., 0.05 = 5%) |
+            | **σ** | Volatility | Annualized std dev of returns (e.g., 0.20 = 20%) |
+            | **T** | Time to expiry | In years (0.25 = 3 months) |
+            | **σ√T** | Vol × √time | Total expected price spread by expiry |
+            | **σ²/2** | Convexity adjustment | Corrects for log-normal vs normal returns |
+
+            ---
+
+            **The numerator: ln(S/K) + (r + σ²/2)T**
+
+            This is asking: *"Where do we expect the stock to be at expiry?"*
+
+            - `ln(S/K)` = where you are now (0 if ATM, positive if ITM, negative if OTM)
+            - `(r + σ²/2)T` = expected drift (stock grows at risk-free rate + volatility adjustment)
+
+            **The denominator: σ√T**
+
+            This normalizes everything into *"number of standard deviations"*
+
+            - Higher vol → larger denominator → d₁ closer to 0 → delta closer to 0.5
+            - More time → larger denominator → same effect
+            - This is why long-dated ATM options have delta ≈ 0.5-0.6 regardless of vol
+
+            ---
+
+            **Example calculation (ATM, 3-month, 20% vol, 5% rate):**
+
+            ```
+            S = 100, K = 100, T = 0.25, r = 0.05, σ = 0.20
+
+            ln(S/K) = ln(1) = 0
+            (r + σ²/2)T = (0.05 + 0.02)×0.25 = 0.0175
+            σ√T = 0.20 × 0.5 = 0.10
+
+            d₁ = (0 + 0.0175) / 0.10 = 0.175
+
+            Delta = N(0.175) = 0.569
+            ```
+
+            So an ATM call has delta ≈ 0.57, slightly above 0.5 due to the drift term.
+            """)
+
 # Scenario Explorer - interactive "what if" explanations
 st.divider()
 st.subheader("Scenario Explorer")
