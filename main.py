@@ -121,11 +121,12 @@ with col2:
     st.subheader("Sensitivity Charts")
 
     # Create tabs for different chart types
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "Price vs Spot",
         "Delta vs Spot",
         "Greeks vs Time",
-        "Price vs Volatility"
+        "Price vs Volatility",
+        "Animated Vol"
     ])
 
     # Generate spot price range for charts
@@ -290,6 +291,132 @@ with col2:
             - The relationship is roughly linear for ATM options
             - Vega (slope of price vs vol) varies with volatility level
             - This is why "vol of vol" matters in practice
+            """)
+
+    with tab5:
+        # Animated chart showing how price curve changes with volatility
+        st.caption("Watch how the option price curve shape changes as volatility increases. Press Play to animate.")
+
+        # Create volatility range for animation frames
+        vol_steps = np.linspace(0.05, 0.80, 30)  # 5% to 80% vol in 30 frames
+
+        # Build animation frames
+        frames = []
+        for v in vol_steps:
+            prices_at_vol = [bs.option_price(s, K, T, r, v, option_type.lower()) for s in spot_range]
+            frames.append(go.Frame(
+                data=[go.Scatter(
+                    x=spot_range,
+                    y=prices_at_vol,
+                    mode='lines',
+                    line=dict(color='blue', width=2),
+                    name='Option Price'
+                )],
+                name=f"{v*100:.0f}%",
+                layout=go.Layout(title=f"{option_type} Price vs Spot (Vol = {v*100:.0f}%)")
+            ))
+
+        # Initial frame data
+        initial_prices = [bs.option_price(s, K, T, r, vol_steps[0], option_type.lower()) for s in spot_range]
+        intrinsic = [max(s - K, 0) if option_type == "Call" else max(K - s, 0) for s in spot_range]
+
+        fig_anim = go.Figure(
+            data=[
+                go.Scatter(
+                    x=spot_range,
+                    y=initial_prices,
+                    mode='lines',
+                    line=dict(color='blue', width=2),
+                    name='Option Price'
+                ),
+                go.Scatter(
+                    x=spot_range,
+                    y=intrinsic,
+                    mode='lines',
+                    line=dict(color='red', width=2, dash='dash'),
+                    name='Intrinsic Value'
+                ),
+            ],
+            frames=frames
+        )
+
+        # Add play/pause buttons and slider
+        fig_anim.update_layout(
+            title=f"{option_type} Price vs Spot (Vol = {vol_steps[0]*100:.0f}%)",
+            xaxis_title="Spot Price",
+            yaxis_title="Option Price",
+            yaxis=dict(range=[0, max(intrinsic) * 1.3]),  # Fixed y-axis for smooth animation
+            height=450,
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    y=1.15,
+                    x=0.0,
+                    xanchor="left",
+                    buttons=[
+                        dict(
+                            label="▶ Play",
+                            method="animate",
+                            args=[None, {
+                                "frame": {"duration": 150, "redraw": True},
+                                "fromcurrent": True,
+                                "transition": {"duration": 50}
+                            }]
+                        ),
+                        dict(
+                            label="⏸ Pause",
+                            method="animate",
+                            args=[[None], {
+                                "frame": {"duration": 0, "redraw": False},
+                                "mode": "immediate",
+                                "transition": {"duration": 0}
+                            }]
+                        )
+                    ]
+                )
+            ],
+            sliders=[{
+                "active": 0,
+                "yanchor": "top",
+                "xanchor": "left",
+                "currentvalue": {
+                    "font": {"size": 14},
+                    "prefix": "Volatility: ",
+                    "visible": True,
+                    "xanchor": "center"
+                },
+                "transition": {"duration": 50},
+                "pad": {"b": 10, "t": 50},
+                "len": 0.9,
+                "x": 0.05,
+                "y": 0,
+                "steps": [
+                    {"args": [[f"{v*100:.0f}%"],
+                              {"frame": {"duration": 0, "redraw": True},
+                               "mode": "immediate",
+                               "transition": {"duration": 0}}],
+                     "label": f"{v*100:.0f}%",
+                     "method": "animate"}
+                    for v in vol_steps
+                ]
+            }]
+        )
+
+        fig_anim.add_vline(x=K, line_dash="dot", line_color="gray", annotation_text="Strike")
+
+        st.plotly_chart(fig_anim, use_container_width=True)
+
+        with st.expander("Understanding this animation"):
+            st.markdown("""
+            **What you're seeing:**
+            - As volatility increases, the option price curve "lifts" across all spot prices
+            - Deep OTM options gain value fastest (percentage-wise) because higher vol = more chance of reaching strike
+            - The red dashed intrinsic value line stays fixed - it's the payoff at expiry regardless of vol
+            - The gap between blue and red is **time value**, which expands with volatility
+
+            **Key insight:** This is why options are sometimes called "volatility instruments" -
+            buying an option is essentially a bet that realized vol will exceed implied vol.
             """)
 
 # Scenario Explorer - interactive "what if" explanations
