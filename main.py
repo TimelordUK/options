@@ -292,6 +292,210 @@ with col2:
             - This is why "vol of vol" matters in practice
             """)
 
+# Scenario Explorer - interactive "what if" explanations
+st.divider()
+st.subheader("Scenario Explorer")
+st.caption("Move the slider to explore different spot prices and understand why the option has that value.")
+
+scenario_spot = st.slider(
+    "What-if Spot Price",
+    min_value=float(K * 0.5),
+    max_value=float(K * 1.5),
+    value=float(S),
+    step=1.0,
+    key="scenario_spot",
+)
+
+# Calculate values at scenario spot
+scenario_price = bs.option_price(scenario_spot, K, T, r, sigma, option_type.lower())
+scenario_greeks = bs.all_greeks(scenario_spot, K, T, r, sigma, option_type.lower())
+
+if option_type == "Call":
+    intrinsic_value = max(scenario_spot - K, 0)
+    scenario_itm = scenario_spot > K
+else:
+    intrinsic_value = max(K - scenario_spot, 0)
+    scenario_itm = scenario_spot < K
+
+time_value = scenario_price - intrinsic_value
+moneyness_pct = (scenario_spot / K - 1) * 100
+
+# Determine moneyness category
+if abs(scenario_spot - K) < K * 0.02:
+    moneyness_cat = "ATM (At-The-Money)"
+elif scenario_itm:
+    if abs(moneyness_pct) > 20:
+        moneyness_cat = "Deep ITM (In-The-Money)"
+    else:
+        moneyness_cat = "ITM (In-The-Money)"
+else:
+    if abs(moneyness_pct) > 20:
+        moneyness_cat = "Deep OTM (Out-of-The-Money)"
+    else:
+        moneyness_cat = "OTM (Out-of-The-Money)"
+
+# Helper to format small values with appropriate precision
+def fmt_price(val):
+    if val == 0:
+        return "$0.00"
+    elif abs(val) < 0.0001:
+        return f"${val:.2e}"  # Scientific notation for very tiny
+    elif abs(val) < 0.01:
+        return f"${val:.6f}"  # 6 decimals for sub-penny
+    else:
+        return f"${val:.2f}"
+
+def fmt_greek(val):
+    if val == 0:
+        return "0.00"
+    elif abs(val) < 0.0001:
+        return f"{val:.2e}"
+    elif abs(val) < 0.01:
+        return f"{val:.6f}"
+    else:
+        return f"{val:.4f}"
+
+# Display breakdown
+scen_col1, scen_col2 = st.columns(2)
+
+with scen_col1:
+    st.markdown(f"**Spot: ${scenario_spot:.0f} | Strike: ${K:.0f} | {option_type}**")
+    st.markdown(f"**Status:** {moneyness_cat}")
+    st.markdown(f"""
+    | Component | Value |
+    |-----------|-------|
+    | Option Price | {fmt_price(scenario_price)} |
+    | Intrinsic Value | {fmt_price(intrinsic_value)} |
+    | Time Value | {fmt_price(time_value)} |
+    | Delta | {fmt_greek(scenario_greeks['delta'])} |
+    """)
+
+with scen_col2:
+    # Generate contextual explanation
+    if option_type == "Call":
+        if scenario_spot < K * 0.8:
+            explanation = f"""
+            **Why is this {option_type.lower()} nearly worthless?**
+
+            With spot at ${scenario_spot:.0f} and strike at ${K:.0f}, you'd be paying ${K:.0f}
+            for something worth ${scenario_spot:.0f} in the market. That's a ${K - scenario_spot:.0f} loss
+            if exercised now.
+
+            The small value (${scenario_price:.2f}) is pure **time value** - the chance that
+            spot rises above ${K:.0f} before expiry. With {T*365:.0f} days left and {sigma*100:.0f}% volatility,
+            there's a {abs(scenario_greeks['delta'])*100:.0f}% chance of finishing ITM.
+            """
+        elif scenario_spot < K:
+            explanation = f"""
+            **Why does this OTM {option_type.lower()} have value?**
+
+            Spot (${scenario_spot:.0f}) is below strike (${K:.0f}), so **intrinsic value is zero** -
+            no profit from immediate exercise.
+
+            But there's ${time_value:.2f} of **time value**. With {T*365:.0f} days and {sigma*100:.0f}% vol,
+            the market prices in a {abs(scenario_greeks['delta'])*100:.0f}% probability of spot rising
+            above ${K:.0f}. The closer to the strike, the higher this probability.
+            """
+        elif abs(scenario_spot - K) < K * 0.02:
+            explanation = f"""
+            **ATM - Maximum Uncertainty**
+
+            Spot (${scenario_spot:.0f}) equals strike (${K:.0f}). The option could go either way.
+
+            **Time value is maximized** at ${time_value:.2f} because uncertainty is highest here.
+            Delta ≈ {scenario_greeks['delta']:.0f}% means roughly 50/50 chance of finishing ITM.
+
+            This is also where **gamma is highest** ({scenario_greeks['gamma']:.3f}) - small spot moves
+            cause big delta changes. Hedging is most difficult here.
+            """
+        elif scenario_spot < K * 1.2:
+            explanation = f"""
+            **ITM - Has Real Value Now**
+
+            Spot (${scenario_spot:.0f}) > Strike (${K:.0f}), so exercising gives ${intrinsic_value:.2f} profit.
+
+            The option is worth ${scenario_price:.2f}:
+            - **Intrinsic**: ${intrinsic_value:.2f} (locked-in value)
+            - **Time value**: ${time_value:.2f} (could go higher still)
+
+            Delta is {scenario_greeks['delta']:.2f} - the option moves almost 1:1 with spot but
+            with downside protection (can't lose more than the premium).
+            """
+        else:
+            explanation = f"""
+            **Deep ITM - Behaves Like Stock**
+
+            With spot at ${scenario_spot:.0f} vs strike ${K:.0f}, this is ${scenario_spot - K:.0f} in-the-money.
+
+            **Delta ≈ {scenario_greeks['delta']:.2f}** means it moves nearly 1:1 with the underlying.
+            Almost all value is **intrinsic** (${intrinsic_value:.2f}), minimal time value (${time_value:.2f}).
+
+            At this point, you're essentially holding leveraged stock exposure with
+            limited downside. The option will almost certainly be exercised.
+            """
+    else:  # Put
+        if scenario_spot > K * 1.2:
+            explanation = f"""
+            **Why is this {option_type.lower()} nearly worthless?**
+
+            With spot at ${scenario_spot:.0f} and strike at ${K:.0f}, you'd be selling at ${K:.0f}
+            something worth ${scenario_spot:.0f}. That's a ${scenario_spot - K:.0f} loss vs market price.
+
+            The small value (${scenario_price:.2f}) is pure **time value** - the chance that
+            spot falls below ${K:.0f} before expiry. With {T*365:.0f} days left,
+            there's only a {abs(scenario_greeks['delta'])*100:.0f}% chance of finishing ITM.
+            """
+        elif scenario_spot > K:
+            explanation = f"""
+            **Why does this OTM {option_type.lower()} have value?**
+
+            Spot (${scenario_spot:.0f}) is above strike (${K:.0f}), so **intrinsic value is zero** -
+            no profit from immediate exercise.
+
+            But there's ${time_value:.2f} of **time value**. With {T*365:.0f} days and {sigma*100:.0f}% vol,
+            the market prices in a {abs(scenario_greeks['delta'])*100:.0f}% probability of spot falling
+            below ${K:.0f}. Puts provide insurance against downside.
+            """
+        elif abs(scenario_spot - K) < K * 0.02:
+            explanation = f"""
+            **ATM - Maximum Uncertainty**
+
+            Spot (${scenario_spot:.0f}) equals strike (${K:.0f}). The option could go either way.
+
+            **Time value is maximized** at ${time_value:.2f} because uncertainty is highest here.
+            Delta ≈ {scenario_greeks['delta']:.2f} means roughly 50/50 chance of finishing ITM.
+
+            This is also where **gamma is highest** ({scenario_greeks['gamma']:.3f}) - small spot moves
+            cause big delta changes.
+            """
+        elif scenario_spot > K * 0.8:
+            explanation = f"""
+            **ITM - Has Real Value Now**
+
+            Spot (${scenario_spot:.0f}) < Strike (${K:.0f}), so exercising gives ${intrinsic_value:.2f} profit.
+
+            The option is worth ${scenario_price:.2f}:
+            - **Intrinsic**: ${intrinsic_value:.2f} (locked-in value)
+            - **Time value**: ${time_value:.2f} (could go higher still)
+
+            Delta is {scenario_greeks['delta']:.2f} - the option gains as spot falls,
+            providing portfolio protection.
+            """
+        else:
+            explanation = f"""
+            **Deep ITM - High Insurance Value**
+
+            With spot at ${scenario_spot:.0f} vs strike ${K:.0f}, this is ${K - scenario_spot:.0f} in-the-money.
+
+            **Delta ≈ {scenario_greeks['delta']:.2f}** means it moves nearly 1:1 (inverse) with spot.
+            Almost all value is **intrinsic** (${intrinsic_value:.2f}), minimal time value (${time_value:.2f}).
+
+            This put provides strong downside protection - it's like insurance that's
+            already paying out.
+            """
+
+    st.markdown(explanation)
+
 # Educational section
 st.divider()
 
