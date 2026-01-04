@@ -121,12 +121,13 @@ with col2:
     st.subheader("Sensitivity Charts")
 
     # Create tabs for different chart types
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Price vs Spot",
         "Delta vs Spot",
         "Greeks vs Time",
         "Price vs Volatility",
-        "Animated Vol"
+        "Animated Vol",
+        "Animated Delta"
     ])
 
     # Generate spot price range for charts
@@ -417,6 +418,173 @@ with col2:
 
             **Key insight:** This is why options are sometimes called "volatility instruments" -
             buying an option is essentially a bet that realized vol will exceed implied vol.
+            """)
+
+    with tab6:
+        # Animated delta chart showing how delta curve changes with volatility
+        st.markdown("""
+        **Delta = N(d₁)** where d₁ = [ln(S/K) + (r + σ²/2)T] / **(σ√T)**
+
+        The denominator **σ√T** is the key: it controls how sharply delta transitions from 0 to 1.
+        """)
+
+        # Create volatility range for animation
+        delta_vol_steps = np.linspace(0.05, 0.80, 30)  # 5% to 80% vol
+
+        # Build animation frames for delta
+        delta_frames = []
+        for v in delta_vol_steps:
+            deltas_at_vol = [bs.delta(s, K, T, r, v, option_type.lower()) for s in spot_range]
+            gammas_at_vol = [bs.gamma(s, K, T, r, v) for s in spot_range]
+            delta_frames.append(go.Frame(
+                data=[
+                    go.Scatter(
+                        x=spot_range,
+                        y=deltas_at_vol,
+                        mode='lines',
+                        line=dict(color='blue', width=2),
+                        name='Delta'
+                    ),
+                    go.Scatter(
+                        x=spot_range,
+                        y=gammas_at_vol,
+                        mode='lines',
+                        line=dict(color='orange', width=2),
+                        name='Gamma',
+                        yaxis='y2'
+                    )
+                ],
+                name=f"{v*100:.0f}%",
+                layout=go.Layout(title=f"Delta & Gamma vs Spot (Vol = {v*100:.0f}%)")
+            ))
+
+        # Initial frame
+        initial_deltas = [bs.delta(s, K, T, r, delta_vol_steps[0], option_type.lower()) for s in spot_range]
+        initial_gammas = [bs.gamma(s, K, T, r, delta_vol_steps[0]) for s in spot_range]
+
+        fig_delta_anim = go.Figure(
+            data=[
+                go.Scatter(
+                    x=spot_range,
+                    y=initial_deltas,
+                    mode='lines',
+                    line=dict(color='blue', width=2),
+                    name='Delta'
+                ),
+                go.Scatter(
+                    x=spot_range,
+                    y=initial_gammas,
+                    mode='lines',
+                    line=dict(color='orange', width=2),
+                    name='Gamma',
+                    yaxis='y2'
+                )
+            ],
+            frames=delta_frames
+        )
+
+        # Fixed y-axis ranges for smooth animation
+        y1_range = [-1.1, 1.1] if option_type == "Put" else [-0.1, 1.1]
+
+        fig_delta_anim.update_layout(
+            title=f"Delta & Gamma vs Spot (Vol = {delta_vol_steps[0]*100:.0f}%)",
+            xaxis_title="Spot Price",
+            yaxis=dict(title="Delta", range=y1_range),
+            yaxis2=dict(
+                title="Gamma",
+                overlaying='y',
+                side='right',
+                range=[0, max(initial_gammas) * 2.5]
+            ),
+            height=450,
+            legend=dict(x=0.01, y=0.99),
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    y=1.15,
+                    x=0.0,
+                    xanchor="left",
+                    buttons=[
+                        dict(
+                            label="▶ Play",
+                            method="animate",
+                            args=[None, {
+                                "frame": {"duration": 150, "redraw": True},
+                                "fromcurrent": True,
+                                "transition": {"duration": 50}
+                            }]
+                        ),
+                        dict(
+                            label="⏸ Pause",
+                            method="animate",
+                            args=[[None], {
+                                "frame": {"duration": 0, "redraw": False},
+                                "mode": "immediate",
+                                "transition": {"duration": 0}
+                            }]
+                        )
+                    ]
+                )
+            ],
+            sliders=[{
+                "active": 0,
+                "yanchor": "top",
+                "xanchor": "left",
+                "currentvalue": {
+                    "font": {"size": 14},
+                    "prefix": "Volatility: ",
+                    "visible": True,
+                    "xanchor": "center"
+                },
+                "transition": {"duration": 50},
+                "pad": {"b": 10, "t": 50},
+                "len": 0.9,
+                "x": 0.05,
+                "y": 0,
+                "steps": [
+                    {"args": [[f"{v*100:.0f}%"],
+                              {"frame": {"duration": 0, "redraw": True},
+                               "mode": "immediate",
+                               "transition": {"duration": 0}}],
+                     "label": f"{v*100:.0f}%",
+                     "method": "animate"}
+                    for v in delta_vol_steps
+                ]
+            }]
+        )
+
+        fig_delta_anim.add_vline(x=K, line_dash="dot", line_color="gray", annotation_text="Strike")
+
+        st.plotly_chart(fig_delta_anim, use_container_width=True)
+
+        with st.expander("Understanding Delta vs Volatility", expanded=True):
+            st.markdown(r"""
+            **Why does the delta curve flatten with higher volatility?**
+
+            The formula: **d₁ = [ln(S/K) + (r + σ²/2)T] / (σ√T)**
+
+            | Volatility | σ√T (denominator) | Effect on d₁ | Delta curve shape |
+            |------------|-------------------|--------------|-------------------|
+            | **5%** | 0.025 (tiny) | d₁ swings wildly | Sharp step function |
+            | **20%** | 0.10 | d₁ moderate | S-curve |
+            | **80%** | 0.40 (large) | d₁ changes slowly | Nearly flat line |
+
+            **The intuition:**
+            - **Low vol**: Market is confident about where spot ends up. Near the strike,
+              a tiny move tips from "probably OTM" to "probably ITM" → delta jumps sharply.
+            - **High vol**: Anything can happen. Deep OTM? Still has a chance. Deep ITM?
+              Might not stay there. So delta is uncertain (close to 0.5) across a wide range.
+
+            **Watch the gamma (orange):**
+            - Gamma = slope of the delta curve = how fast delta changes
+            - Low vol → gamma spikes sharply at strike (hard to hedge!)
+            - High vol → gamma is low and spread out (easier to hedge)
+
+            **Why this matters for trading:**
+            - Delta hedging at low vol near strike requires constant rebalancing (high gamma)
+            - This is "gamma risk" - you're always chasing the hedge
+            - Market makers charge more (wider spreads) for high-gamma positions
             """)
 
 # Scenario Explorer - interactive "what if" explanations
