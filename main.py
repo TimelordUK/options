@@ -1145,13 +1145,91 @@ with st.expander("Black-Scholes Formula Explained", expanded=False):
     $$d_1 = \frac{\ln(S/K) + (r + \sigma^2/2)T}{\sigma\sqrt{T}}$$
 
     $$d_2 = d_1 - \sigma\sqrt{T}$$
+    """)
 
-    **Intuition:**
-    - $N(d_2)$ ≈ probability of expiring in-the-money (risk-neutral)
-    - $N(d_1)$ is $N(d_2)$ adjusted for the delta hedge
-    - $S \cdot N(d_1)$: Expected value of receiving the stock
-    - $K \cdot e^{-rT} \cdot N(d_2)$: PV of expected cost if exercised
+    st.markdown("### Term-by-Term Breakdown")
+    st.markdown("""
+    The call formula has **two terms** - think of it as *what you get* minus *what you pay*:
 
+    | Term | Formula | Meaning |
+    |------|---------|---------|
+    | **Term 1** | S × N(d₁) | Expected value of **receiving the stock** |
+    | **Term 2** | K × e^(-rT) × N(d₂) | Present value of **paying the strike** |
+
+    - **N(d₂)** = Probability of finishing ITM (i.e., exercising)
+    - **N(d₁)** = Same, but adjusted for the delta hedge (slightly higher)
+    - **e^(-rT)** = Discount factor (strike is paid at expiry, so discount to today)
+    """)
+
+    # Live calculation with current parameters
+    st.markdown("### Live Calculation with Your Parameters")
+
+    d1_val = bs.d1(S, K, T, r, sigma)
+    d2_val = bs.d2(S, K, T, r, sigma)
+    n_d1 = norm.cdf(d1_val)
+    n_d2 = norm.cdf(d2_val)
+    discount = np.exp(-r * T)
+
+    term1 = S * n_d1
+    term2 = K * discount * n_d2
+    call_price_calc = term1 - term2
+
+    # For put
+    n_minus_d1 = norm.cdf(-d1_val)
+    n_minus_d2 = norm.cdf(-d2_val)
+    put_term1 = K * discount * n_minus_d2
+    put_term2 = S * n_minus_d1
+    put_price_calc = put_term1 - put_term2
+
+    st.markdown(f"""
+    **Current inputs:** S={S}, K={K}, T={T:.2f}, r={r:.2%}, σ={sigma:.2%}
+
+    **Step 1: Calculate d₁ and d₂**
+    ```
+    d₁ = [ln({S}/{K}) + ({r:.4f} + {sigma:.4f}²/2) × {T:.2f}] / ({sigma:.4f} × √{T:.2f})
+       = [{np.log(S/K):.4f} + {(r + 0.5*sigma**2)*T:.4f}] / {sigma * np.sqrt(T):.4f}
+       = {d1_val:.4f}
+
+    d₂ = d₁ - σ√T = {d1_val:.4f} - {sigma * np.sqrt(T):.4f} = {d2_val:.4f}
+    ```
+
+    **Step 2: Look up normal CDF values**
+    ```
+    N(d₁) = N({d1_val:.4f}) = {n_d1:.4f}  ← Delta (hedge ratio)
+    N(d₂) = N({d2_val:.4f}) = {n_d2:.4f}  ← Probability of ITM
+    ```
+
+    **Step 3: Calculate the two terms (for Call)**
+    ```
+    Term 1: S × N(d₁)           = {S} × {n_d1:.4f} = ${term1:.4f}
+            "Expected stock receipt"
+
+    Term 2: K × e^(-rT) × N(d₂) = {K} × {discount:.4f} × {n_d2:.4f} = ${term2:.4f}
+            "PV of strike payment"
+    ```
+
+    **Step 4: Call Price = Term 1 - Term 2**
+    ```
+    Call = ${term1:.4f} - ${term2:.4f} = ${call_price_calc:.4f}
+    ```
+    """)
+
+    st.markdown(f"""
+    ---
+    **Intuition for these numbers:**
+    - You have a **{n_d2*100:.1f}%** chance of exercising (finishing ITM)
+    - If you exercise, you receive stock worth ~${S} and pay ${K}
+    - But we weight by probability and adjust for timing
+    - Net expected value today: **${call_price_calc:.2f}**
+
+    **Why is N(d₁) > N(d₂)?**
+    - d₁ - d₂ = σ√T = {sigma * np.sqrt(T):.4f}
+    - N(d₁) accounts for *how much* stock you receive, not just *whether* you receive it
+    - Higher stock prices (good outcomes) get more weight, shifting probability up
+    """)
+
+    st.markdown("""
+    ---
     **Key Assumptions:**
     - Log-normal stock prices (geometric Brownian motion)
     - Constant volatility and interest rates
