@@ -6,6 +6,7 @@ Run with: streamlit run main.py
 """
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import lognorm, norm
@@ -683,6 +684,7 @@ with col2:
 
             # Store results in session state
             st.session_state['mc_results'] = {
+                'Z': Z,
                 'S_T': S_T,
                 'payoffs': payoffs,
                 'mc_price': mc_price,
@@ -690,6 +692,8 @@ with col2:
                 'n_sims': n_sims,
                 'K': K,
                 'S': S,
+                'T': T,
+                'r': r,
                 'option_type': option_type
             }
 
@@ -711,6 +715,45 @@ with col2:
                 error = mc_price - bs_price_exact
                 st.metric("Difference", f"${error:+.4f}",
                          delta=f"{error/bs_price_exact*100:+.2f}%" if bs_price_exact > 0 else "N/A")
+
+            # Show detailed calculation for small number of simulations
+            if res['n_sims'] <= 100:
+                with st.expander(f"Step-by-Step Calculation ({res['n_sims']} paths)", expanded=True):
+                    st.markdown(f"""
+                    **Formula:** S_T = S × exp[(r - σ²/2)T + σ√T × Z]  where Z ~ N(0,1)
+
+                    With S={res['S']}, r={res['r']:.2%}, σ={sigma:.2%}, T={res['T']:.2f}:
+                    """)
+
+                    # Build the calculation table
+                    Z_vals = res['Z']
+                    calc_data = []
+                    for i in range(len(Z_vals)):
+                        calc_data.append({
+                            'Path': i + 1,
+                            'Random Z': f"{Z_vals[i]:+.4f}",
+                            'Final Price (S_T)': f"${S_T[i]:.2f}",
+                            'Payoff': f"${payoffs[i]:.2f}",
+                            'Status': 'ITM' if payoffs[i] > 0 else 'OTM'
+                        })
+
+                    df = pd.DataFrame(calc_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+                    # Summary calculation
+                    st.markdown("---")
+                    st.markdown(f"""
+                    **Calculation:**
+
+                    | Step | Calculation | Result |
+                    |------|-------------|--------|
+                    | 1. Sum of all payoffs | Σ payoffs | ${np.sum(payoffs):.2f} |
+                    | 2. Divide by {res['n_sims']} paths | ${np.sum(payoffs):.2f} ÷ {res['n_sims']} | ${np.mean(payoffs):.4f} |
+                    | 3. Discount factor | e^(-{res['r']:.2%} × {res['T']:.2f}) | {np.exp(-res['r']*res['T']):.6f} |
+                    | 4. **Option Price** | ${np.mean(payoffs):.4f} × {np.exp(-res['r']*res['T']):.4f} | **${mc_price:.4f}** |
+
+                    Paths ITM: {np.sum(payoffs > 0)} / {res['n_sims']} = {np.mean(payoffs > 0)*100:.1f}%
+                    """)
 
             # Create the visualization
             fig_mc = make_subplots(
