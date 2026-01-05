@@ -8,6 +8,7 @@ Run with: streamlit run main.py
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.stats import lognorm, norm
 import streamlit as st
 
 import black_scholes as bs
@@ -121,13 +122,14 @@ with col2:
     st.subheader("Sensitivity Charts")
 
     # Create tabs for different chart types
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Price vs Spot",
         "Delta vs Spot",
         "Greeks vs Time",
         "Price vs Volatility",
         "Animated Vol",
-        "Animated Delta"
+        "Animated Delta",
+        "Monte Carlo"
     ])
 
     # Generate spot price range for charts
@@ -636,6 +638,244 @@ with col2:
             ```
 
             So an ATM call has delta ≈ 0.57, slightly above 0.5 due to the drift term.
+            """)
+
+    with tab7:
+        # Monte Carlo simulation showing probability distribution approach
+        st.markdown("""
+        **Option Pricing as Expected Value**
+
+        Instead of formulas, think of it this way:
+        1. Simulate many possible future prices
+        2. Calculate payoff for each: max(S - K, 0) for calls
+        3. Average the payoffs
+        4. Discount to today
+
+        This is exactly what Black-Scholes computes analytically!
+        """)
+
+        # Number of simulations slider
+        n_sims = st.select_slider(
+            "Number of simulations",
+            options=[100, 500, 1000, 5000, 10000, 50000, 100000],
+            value=10000,
+            help="More simulations = closer to theoretical price (but slower)"
+        )
+
+        # Run simulation button to avoid constant recalculation
+        if st.button("Run Simulation", type="primary"):
+            # Run Monte Carlo simulation
+            np.random.seed(None)  # Random seed each time
+
+            # Stock follows: S_T = S * exp((r - σ²/2)T + σ√T × Z)
+            Z = np.random.normal(0, 1, n_sims)
+            S_T = S * np.exp((r - 0.5*sigma**2)*T + sigma*np.sqrt(T)*Z)
+
+            # Calculate payoffs
+            if option_type == "Call":
+                payoffs = np.maximum(S_T - K, 0)
+            else:
+                payoffs = np.maximum(K - S_T, 0)
+
+            # Monte Carlo price
+            mc_price = np.exp(-r*T) * np.mean(payoffs)
+            bs_price_exact = bs.option_price(S, K, T, r, sigma, option_type.lower())
+
+            # Store results in session state
+            st.session_state['mc_results'] = {
+                'S_T': S_T,
+                'payoffs': payoffs,
+                'mc_price': mc_price,
+                'bs_price': bs_price_exact,
+                'n_sims': n_sims,
+                'K': K,
+                'S': S,
+                'option_type': option_type
+            }
+
+        # Display results if available
+        if 'mc_results' in st.session_state:
+            res = st.session_state['mc_results']
+            S_T = res['S_T']
+            payoffs = res['payoffs']
+            mc_price = res['mc_price']
+            bs_price_exact = res['bs_price']
+
+            # Results metrics
+            mc_col1, mc_col2, mc_col3 = st.columns(3)
+            with mc_col1:
+                st.metric("Monte Carlo Price", f"${mc_price:.4f}")
+            with mc_col2:
+                st.metric("Black-Scholes Exact", f"${bs_price_exact:.4f}")
+            with mc_col3:
+                error = mc_price - bs_price_exact
+                st.metric("Difference", f"${error:+.4f}",
+                         delta=f"{error/bs_price_exact*100:+.2f}%" if bs_price_exact > 0 else "N/A")
+
+            # Create the visualization
+            fig_mc = make_subplots(
+                rows=2, cols=1,
+                subplot_titles=(
+                    f"Distribution of Simulated Prices at Expiry ({res['n_sims']:,} paths)",
+                    f"{res['option_type']} Payoff: Probability × Payoff = Option Value"
+                ),
+                vertical_spacing=0.15,
+                row_heights=[0.5, 0.5]
+            )
+
+            # Histogram of final prices
+            fig_mc.add_trace(
+                go.Histogram(
+                    x=S_T,
+                    nbinsx=80,
+                    name='Simulated Prices',
+                    marker_color='steelblue',
+                    opacity=0.7
+                ),
+                row=1, col=1
+            )
+
+            # Add theoretical log-normal distribution
+            price_range = np.linspace(S * 0.3, S * 2.0, 200)
+            # Log-normal parameters
+            mu_ln = np.log(S) + (r - 0.5*sigma**2)*T
+            sigma_ln = sigma * np.sqrt(T)
+            theoretical_pdf = lognorm.pdf(price_range, s=sigma_ln, scale=np.exp(mu_ln))
+            # Scale to match histogram
+            hist_scale = len(S_T) * (S_T.max() - S_T.min()) / 80
+            fig_mc.add_trace(
+                go.Scatter(
+                    x=price_range,
+                    y=theoretical_pdf * hist_scale,
+                    mode='lines',
+                    name='Theoretical (Log-Normal)',
+                    line=dict(color='red', width=2)
+                ),
+                row=1, col=1
+            )
+
+            # Add strike line
+            fig_mc.add_vline(x=res['K'], line_dash="dash", line_color="green",
+                           annotation_text=f"Strike={res['K']}", row=1, col=1)
+
+            # Payoff diagram with probability shading
+            # Sort for clean visualization
+            sort_idx = np.argsort(S_T)
+            S_T_sorted = S_T[sort_idx]
+            payoffs_sorted = payoffs[sort_idx]
+
+            # Bin the data for cleaner visualization
+            n_bins = 100
+            bin_edges = np.linspace(S_T.min(), S_T.max(), n_bins + 1)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            bin_counts, _ = np.histogram(S_T, bins=bin_edges)
+            bin_probs = bin_counts / len(S_T)
+
+            # Calculate average payoff in each bin
+            bin_payoffs = np.zeros(n_bins)
+            for i in range(n_bins):
+                mask = (S_T >= bin_edges[i]) & (S_T < bin_edges[i+1])
+                if mask.sum() > 0:
+                    bin_payoffs[i] = payoffs[mask].mean()
+
+            # Expected payoff contribution per bin
+            expected_contrib = bin_probs * bin_payoffs
+
+            # Plot payoff function
+            if res['option_type'] == "Call":
+                payoff_line = np.maximum(bin_centers - res['K'], 0)
+            else:
+                payoff_line = np.maximum(res['K'] - bin_centers, 0)
+
+            fig_mc.add_trace(
+                go.Scatter(
+                    x=bin_centers,
+                    y=payoff_line,
+                    mode='lines',
+                    name='Payoff Function',
+                    line=dict(color='blue', width=2)
+                ),
+                row=2, col=1
+            )
+
+            # Shade the expected value contribution
+            fig_mc.add_trace(
+                go.Bar(
+                    x=bin_centers,
+                    y=expected_contrib * 100,  # Scale for visibility
+                    name='Prob × Payoff (scaled)',
+                    marker_color='rgba(0, 150, 0, 0.5)',
+                    width=(bin_edges[1] - bin_edges[0]) * 0.9
+                ),
+                row=2, col=1
+            )
+
+            fig_mc.add_vline(x=res['K'], line_dash="dash", line_color="green", row=2, col=1)
+
+            fig_mc.update_layout(
+                height=600,
+                showlegend=True,
+                legend=dict(x=0.7, y=0.98)
+            )
+            fig_mc.update_xaxes(title_text="Price at Expiry", row=1, col=1)
+            fig_mc.update_xaxes(title_text="Price at Expiry", row=2, col=1)
+            fig_mc.update_yaxes(title_text="Frequency", row=1, col=1)
+            fig_mc.update_yaxes(title_text="Payoff / Expected Contribution", row=2, col=1)
+
+            st.plotly_chart(fig_mc, use_container_width=True)
+
+            # Statistics
+            with st.expander("Simulation Statistics", expanded=True):
+                prob_itm = np.mean(payoffs > 0) * 100
+                d2_val = bs.d2(S, K, T, r, sigma)
+                theoretical_prob_itm = norm.cdf(d2_val) * 100 if option_type == "Call" else norm.cdf(-d2_val) * 100
+
+                st.markdown(f"""
+                | Statistic | Simulated | Theoretical |
+                |-----------|-----------|-------------|
+                | **Probability of finishing ITM** | {prob_itm:.1f}% | {theoretical_prob_itm:.1f}% (N(d₂)) |
+                | **Average payoff (if ITM)** | ${np.mean(payoffs[payoffs > 0]):.2f} | - |
+                | **Expected payoff (undiscounted)** | ${np.mean(payoffs):.4f} | - |
+                | **Option price (discounted)** | ${mc_price:.4f} | ${bs_price_exact:.4f} |
+
+                **Convergence:** With {res['n_sims']:,} simulations, error is ${abs(mc_price - bs_price_exact):.4f}
+                ({abs(mc_price - bs_price_exact)/bs_price_exact*100:.2f}%).
+                Try increasing simulations to see the price converge to Black-Scholes!
+                """)
+
+        else:
+            st.info("Click 'Run Simulation' to generate Monte Carlo paths and visualize the probability distribution.")
+
+        with st.expander("How Monte Carlo Pricing Works"):
+            st.markdown(r"""
+            **The Algorithm:**
+
+            1. **Model the stock price** using Geometric Brownian Motion:
+
+               $S_T = S_0 \times e^{(r - \frac{\sigma^2}{2})T + \sigma\sqrt{T} \times Z}$
+
+               where Z is a random draw from N(0,1)
+
+            2. **Generate N random paths** (e.g., 100,000)
+
+            3. **Calculate payoff for each path:**
+               - Call: max(S_T - K, 0)
+               - Put: max(K - S_T, 0)
+
+            4. **Average the payoffs** = Expected payoff at expiry
+
+            5. **Discount to today:** Price = e^(-rT) × Average payoff
+
+            **Why it works:**
+            - Law of Large Numbers: sample average → true expected value
+            - Black-Scholes IS this expectation, solved analytically
+            - Monte Carlo is numerical, BS is closed-form - same answer!
+
+            **Why use Monte Carlo?**
+            - Works for complex options where no formula exists
+            - Path-dependent options (Asian, barriers, lookbacks)
+            - Multiple underlying assets
+            - Any payoff function you can code
             """)
 
 # Scenario Explorer - interactive "what if" explanations
